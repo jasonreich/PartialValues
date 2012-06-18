@@ -16,7 +16,10 @@ purposes.
 >   Scary, isException, boo, peek, 
 >   -- * Augmented Show typeclass
 >   ShowA, AugmentedShow(..), showsA, showA, showsPrecA, appPrec,
->   defaultShowsPrecA') where
+>   defaultShowsPrecA',
+>   -- * Explicitly Scary Functors
+>   ExplicitF(..), ExplicitF2(..), BT(..), consBT, MaybePair(..),
+>   toList_BT, toMaybe_MP) where
 
 A few neccessary imports and hides.
 
@@ -82,6 +85,7 @@ an exception predicate at their head.
 >     where
 >       mkScary :: forall a. a -> Scary e a
 >       mkScary = Scary
+>       aux :: forall a. (a -> ShowS) -> a -> ShowS
 >       aux rec x s | isException (mkScary x) = "_" ++ s
 >                   | otherwise = rec x s
 
@@ -175,3 +179,59 @@ gone for a SYB approach.
 > defaultShowsPrecA' inj p t = showParen ((constrArity $ t) > 0 && p > appPrec) (aux t)
 >   where aux t = (showString . showConstr . toConstr $ t)
 >               . (foldr (.) id . gmapQ ((showChar ' ' .) . defaultShowsPrecA inj (appPrec + 1)) $ t)
+
+Explicitly Scary Functors
+=========================
+
+Sometimes I want to make the undefined at the head of a structure
+explicit. I don't have a safe way of doing this yet, but until then
+we have Explictly Scary Functors; make Scary structure explicit.
+
+The basic idea is there exists some function such that;
+
+> class ExplicitF f where
+>   absorb :: Exception e => Scary e (f a) -> f (Scary e a)
+
+> class ExplicitF2 f where
+>   absorb2 :: Exception e => Scary e (f a b) -> f (Scary e a) (Scary e b)
+
+Binary trees
+------------
+
+With binary trees, we can transform Really Scary tree structure into
+empty nodes.
+
+> data BT a = Empty | Leaf a | Branch (BT a) (BT a) deriving Functor
+
+> consBT x xs = Leaf x `Branch` xs
+> toList_BT = flip aux []
+>   where aux Empty        = id
+>         aux (Leaf x)     = (x :)
+>         aux (Branch l r) = aux l . aux r
+
+> instance Monad BT where
+>   return = Leaf
+>   Empty      >>= _ = Empty
+>   Leaf x     >>= f = f x
+>   Branch l r >>= f = Branch (l >>= f) (r >>= f)
+
+> instance ExplicitF BT where
+>   absorb xs | isException xs  = Empty
+>   absorb (Scary Empty)        = Empty
+>   absorb (Scary (Leaf a))     = Leaf (Scary a)
+>   absorb (Scary (Branch l r)) = (absorb . Scary $ l) `Branch` (absorb . Scary $ r)
+
+Maybe Pairs
+-----------
+
+With Maybe enclosing Tuples, we turn Really Scary maybe and tuple
+structure into Nothings.
+
+> data MaybePair a b = NothingPair | JustPair (a, b)
+> toMaybe_MP NothingPair  = Nothing
+> toMaybe_MP (JustPair x) = Just x
+
+> instance ExplicitF2 MaybePair where
+>   absorb2 xs | isException xs       = NothingPair
+>   absorb2 (Scary (NothingPair))     = NothingPair
+>   absorb2 (Scary (JustPair (a, b))) = JustPair (Scary a, Scary b)

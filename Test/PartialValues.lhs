@@ -13,7 +13,7 @@ purposes.
 
 > module Test.PartialValues(
 >   -- * Partial Values
->   Partial, isException, boo, peek, 
+>   Partial, isException, (?), peek, 
 >   -- * Augmented Show typeclass
 >   ShowA, AugmentedShow(..), showsA, showA, showsPrecA, appPrec,
 >   defaultShowsPrecA',
@@ -54,11 +54,11 @@ functor.
 >   pure = return
 >   f <*> x = unwrapMonad $ WrapMonad f <*> WrapMonad x
 
-'boo' creates really scary values.
+(?) creates partial values.
 
 > -- | Throws an exception and wraps it as a 'Partial' value.
-> boo :: Exception e => e -> Partial e a
-> boo = Partial . throw
+> (?) :: Exception e => e -> Partial e a
+> (?) = Partial . throw
 
 Peek all the way inside a 'Partial' value, catching the exception.
 
@@ -68,17 +68,17 @@ Peek all the way inside a 'Partial' value, catching the exception.
 >   `catch` (return . Left)
 >   where force x = x `deepseq` x
 
-'isException' tests for really scary values, i.e. ones that match
+'isException' tests for really partial values, i.e. ones that match
 an exception predicate at their head.
 
-> -- | Is the head of a scary value an exception?
+> -- | Is the head of a Partial value an exception?
 > isException :: Exception e => Partial e a -> Bool
 > isException v = unsafePerformIO $
 >   (evaluate (unsafePeek v) >> return False) `catch` aux v
 >   where aux :: Partial e a -> e -> IO Bool
 >         aux _ _ = return True
 
-'show' will display '_' for values that are really scary.
+'show' will display '_' for values that are really partial.
 *Requires an AugmentedShow instance*.
 
 > instance (Exception e, AugmentedShow a) => Show (Partial e a) where

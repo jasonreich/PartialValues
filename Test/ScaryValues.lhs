@@ -62,10 +62,11 @@ functor.
 
 Peek all the way inside a 'Scary' value, catching the exception.
 
-> peek :: (NFData a, Exception e) => Scary e a -> Either a e
+> peek :: (NFData a, Exception e) => Scary e a -> Either e a
 > peek value = unsafePerformIO $
->   (Left <$> evaluate (force (unsafePeek value)))
->   `catch` (return . Right)
+>   (Right <$> evaluate (force (unsafePeek value)))
+>   `catch` (return . Left)
+>   where force x = x `deepseq` x
 
 'isException' tests for really scary values, i.e. ones that match
 an exception predicate at their head.
@@ -129,6 +130,9 @@ For example, here are some boring instances where they never recurse.
   
 > instance AugmentedShow Bool where
 >   showA' _ = show
+
+> instance AugmentedShow Char where
+>   showA' _ = show
   
 > instance AugmentedShow Int where
 >   showA' _ = show
@@ -145,6 +149,10 @@ And here are some more interesting ones.
 > instance (AugmentedShow a, AugmentedShow b, AugmentedShow c) 
 >          => AugmentedShow (a,b,c) where
 >   showsPrecA' aug _ (a,b,c) s = show_tuple [showsA aug a, showsA aug b, showsA aug c] s
+>
+> instance (AugmentedShow a, AugmentedShow b, AugmentedShow c, AugmentedShow d, AugmentedShow e) 
+>          => AugmentedShow (a,b,c,d,e) where
+>   showsPrecA' aug _ (a,b,c,d,e) s = show_tuple [showsA aug a, showsA aug b, showsA aug c, showsA aug d, showsA aug e] s
 >
 > show_tuple :: [ShowS] -> ShowS
 > show_tuple ss = ('(':) . foldr1 (\s r -> s . (',':) . r) ss . (')':)

@@ -14,9 +14,6 @@ purposes.
 > module Test.PartialValues(
 >   -- * Partial Values
 >   Partial, isException, (?), peek, 
->   -- * Augmented Show typeclass
->   ShowA, AugmentedShow(..), showsA, showA, showsPrecA, appPrec,
->   defaultShowsPrecA',
 >   -- * Explicitly Partial Functors
 >   ExplicitF(..), ExplicitF2(..), BT(..), consBT, MaybePair(..),
 >   toList_BT, toMaybe_MP) where
@@ -27,6 +24,8 @@ A few neccessary imports and hides.
 > import Control.DeepSeq
 > import Control.Exception
 > import Data.Data
+> import Data.List
+> import Data.Typeable
 > import GHC.Show (appPrec)
 > import System.IO.Unsafe
 > import Prelude hiding (catch)
@@ -81,112 +80,36 @@ an exception predicate at their head.
 'show' will display '_' for values that are really partial.
 *Requires an AugmentedShow instance*.
 
-> instance (Exception e, AugmentedShow a) => Show (Partial e a) where
->   show = showA aux . unsafePeek
->     where
->       mkPartial :: forall a. a -> Partial e a
->       mkPartial = Partial
->       aux :: forall a. (a -> ShowS) -> a -> ShowS
->       aux rec x s | isException (mkPartial x) = "_" ++ s
->                   | otherwise = rec x s
+> instance (Exception e, Data a) => Show (Partial e a) where
+>   showsPrec = showsPrecData
 
-AugmentedShow typeclass
-=======================
-
-To achieve this, we using a special variant of 'Show' that allows
-a modification to be made at head before the instance definition takes
-over.
-
-> -- | Show function that is augmentable
-> class AugmentedShow a where
->   showsPrecA' :: ShowA -> Int -> a -> ShowS
->   showA'      :: ShowA -> a -> String
->  
->   showsPrecA' aug _ x s = showA' aug x ++ s
->   showA' aug x = showsPrecA' aug 0 x ""
-
-These 'augmentations' are described using a Rank-2 polymorphic
-function.
-
-> -- | Modification of shows functions
-> type ShowA = forall a. (a -> ShowS) -> (a -> ShowS)
-
-We wrap up the prime variants to automatically apply the modification
-at head.
-
-> showsA :: AugmentedShow a => ShowA -> a -> ShowS
-> showsA aug = aug $ showsPrecA' aug 0
->
-> showsPrecA :: AugmentedShow a => ShowA -> Int -> a -> ShowS
-> showsPrecA aug p = aug $ showsPrecA' aug p
->
-> showA :: AugmentedShow a => ShowA -> a -> String
-> showA aug x = aug (\x s -> showA' aug x ++ s) x []
-
-For example, here are some boring instances where they never recurse.
-
-> instance AugmentedShow () where
->   showA' _ () = "()"
-  
-> instance AugmentedShow Bool where
->   showA' _ = show
-
-> instance AugmentedShow Char where
->   showA' _ = show
-  
-> instance AugmentedShow Int where
->   showA' _ = show
-  
-> instance AugmentedShow Integer where
->   showA' _ = show
-
-And here are some more interesting ones.
-
-> instance (AugmentedShow a, AugmentedShow b) => 
->          AugmentedShow (a,b) where
->   showsPrecA' aug _ (a,b) s = show_tuple [showsA aug a, showsA aug b] s
->  
-> instance (AugmentedShow a, AugmentedShow b, AugmentedShow c) 
->          => AugmentedShow (a,b,c) where
->   showsPrecA' aug _ (a,b,c) s = show_tuple [showsA aug a, showsA aug b, showsA aug c] s
->
-> instance (AugmentedShow a, AugmentedShow b, AugmentedShow c, AugmentedShow d, AugmentedShow e) 
->          => AugmentedShow (a,b,c,d,e) where
->   showsPrecA' aug _ (a,b,c,d,e) s = show_tuple [showsA aug a, showsA aug b, showsA aug c, showsA aug d, showsA aug e] s
->
-> show_tuple :: [ShowS] -> ShowS
-> show_tuple ss = ('(':) . foldr1 (\s r -> s . (',':) . r) ss . (')':)
->
-> instance (AugmentedShow a) => AugmentedShow [a] where
->   showsPrecA' _   d []  = (++) "[]"
->   showsPrecA' aug d (x:xs) = showParen (d > 5) showStr
->     where
->       showStr = showsPrecA aug (5+1) x
->               . showString ":" 
->               . showsPrecA aug (5) xs
-> 
-> instance (AugmentedShow a) => AugmentedShow (Maybe a) where
->   showsPrecA' _   d Nothing  = (++) "Nothing"
->   showsPrecA' aug d (Just n) = showParen (d > appPrec) showStr
->     where
->       showStr = showString "Just " . showsPrecA aug (appPrec+1) n
-
-I'm sure these could be automatically derived using Derive or DrIFT. I've
-gone for a SYB approach.
-
-~ Data.Generics.Text
+> showsPrecData :: forall e a. (Exception e, Data a) => Int -> Partial e a -> ShowS
+> showsPrecData p x | isException x = ('_':)
+> showsPrecData p (Partial t)
+>   -- ** Is a tuple **
+>   | (isPrefixOf "(," . show . toConstr) t 
+>   = showParen True 
+>   $ foldr (.) id . intersperse (showChar ',')
+>   . gmapQ (showsPrecData appPrec . mkPartial) $ t
+>   -- ** Is a cons **
+>   | ((== "(:)") . show . toConstr) t
+>   = showParen (p > 5)
+>   $ gmapQi 0 (showsPrecData (5+1) . mkPartial) t
+>   . showChar ':'
+>   . gmapQi 1 (showsPrecData 5 . mkPartial) t
+>   -- ** Is to be displayed prefix **
+>   | otherwise
+>   = showParen (constrArity t > 0 && p > appPrec)
+>   $ (showString . showConstr . toConstr $ t)
+>     . (foldr (.) id . gmapQ ( (showChar ' ' .)
+>                             . showsPrecData (appPrec + 1)
+>                             . mkPartial ) $ t)
+>   where 
+>     mkPartial :: forall a. a -> Partial e a
+>     mkPartial = Partial
 
 > constrArity :: Data d => d -> Int
 > constrArity = length . gmapQ (const ())
-
-> defaultShowsPrecA :: Data a => ShowA -> Int -> a -> ShowS
-> defaultShowsPrecA inj p = inj (defaultShowsPrecA' inj p)
-
-> -- | A default definition of 'showsPrecA'' for Data instances.
-> defaultShowsPrecA' :: Data a => ShowA -> Int -> a -> ShowS
-> defaultShowsPrecA' inj p t = showParen ((constrArity $ t) > 0 && p > appPrec) (aux t)
->   where aux t = (showString . showConstr . toConstr $ t)
->               . (foldr (.) id . gmapQ ((showChar ' ' .) . defaultShowsPrecA inj (appPrec + 1)) $ t)
 
 Explicitly Partial Functors
 =========================

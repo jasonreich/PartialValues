@@ -1,4 +1,4 @@
-% Scary Values
+% Partial Values
 % Dealing with Haskell values that we expect to contain exceptions.
 % Jason S. Reich
 % 6th June 2012
@@ -11,13 +11,13 @@ in LSC). The techniques used largely taken from 'Chasing Bottoms'
 (Danielsson and Jansson, 2004) but with different formulations for my
 purposes.
 
-> module Test.ScaryValues(
->   -- * Scary Values
->   Scary, isException, boo, peek, 
+> module Test.PartialValues(
+>   -- * Partial Values
+>   Partial, isException, boo, peek, 
 >   -- * Augmented Show typeclass
 >   ShowA, AugmentedShow(..), showsA, showA, showsPrecA, appPrec,
 >   defaultShowsPrecA',
->   -- * Explicitly Scary Functors
+>   -- * Explicitly Partial Functors
 >   ExplicitF(..), ExplicitF2(..), BT(..), consBT, MaybePair(..),
 >   toList_BT, toMaybe_MP) where
 
@@ -31,38 +31,38 @@ A few neccessary imports and hides.
 > import System.IO.Unsafe
 > import Prelude hiding (catch)
 
-Scary Values
+Partial Values
 ============
 
-Scary values are just normal Haskell values that we know something
+Partial values are just normal Haskell values that we know something
 about. We represent this as a boring functor that is phantom-indexed
 by an exception type.
 
-> -- | 'Scary' values --- Values into which we may have deliberately
+> -- | 'Partial' values --- Values into which we may have deliberately
 > -- injected exceptions.
-> newtype Scary e a = Scary { unsafePeek :: a }
+> newtype Partial e a = Partial { unsafePeek :: a }
 >   deriving Functor
 
-Name a mathematical abstraction, it probably holds over the 'Scary'
+Name a mathematical abstraction, it probably holds over the 'Partial'
 functor.
 
-> instance Monad (Scary e) where
->   return = Scary
->   Scary x >>= f = f x
+> instance Monad (Partial e) where
+>   return = Partial
+>   Partial x >>= f = f x
 >
-> instance Applicative (Scary e) where
+> instance Applicative (Partial e) where
 >   pure = return
 >   f <*> x = unwrapMonad $ WrapMonad f <*> WrapMonad x
 
 'boo' creates really scary values.
 
-> -- | Throws an exception and wraps it as a 'Scary' value.
-> boo :: Exception e => e -> Scary e a
-> boo = Scary . throw
+> -- | Throws an exception and wraps it as a 'Partial' value.
+> boo :: Exception e => e -> Partial e a
+> boo = Partial . throw
 
-Peek all the way inside a 'Scary' value, catching the exception.
+Peek all the way inside a 'Partial' value, catching the exception.
 
-> peek :: (NFData a, Exception e) => Scary e a -> Either e a
+> peek :: (NFData a, Exception e) => Partial e a -> Either e a
 > peek value = unsafePerformIO $
 >   (Right <$> evaluate (force (unsafePeek value)))
 >   `catch` (return . Left)
@@ -72,22 +72,22 @@ Peek all the way inside a 'Scary' value, catching the exception.
 an exception predicate at their head.
 
 > -- | Is the head of a scary value an exception?
-> isException :: Exception e => Scary e a -> Bool
+> isException :: Exception e => Partial e a -> Bool
 > isException v = unsafePerformIO $
 >   (evaluate (unsafePeek v) >> return False) `catch` aux v
->   where aux :: Scary e a -> e -> IO Bool
+>   where aux :: Partial e a -> e -> IO Bool
 >         aux _ _ = return True
 
 'show' will display '_' for values that are really scary.
 *Requires an AugmentedShow instance*.
 
-> instance (Exception e, AugmentedShow a) => Show (Scary e a) where
+> instance (Exception e, AugmentedShow a) => Show (Partial e a) where
 >   show = showA aux . unsafePeek
 >     where
->       mkScary :: forall a. a -> Scary e a
->       mkScary = Scary
+>       mkPartial :: forall a. a -> Partial e a
+>       mkPartial = Partial
 >       aux :: forall a. (a -> ShowS) -> a -> ShowS
->       aux rec x s | isException (mkScary x) = "_" ++ s
+>       aux rec x s | isException (mkPartial x) = "_" ++ s
 >                   | otherwise = rec x s
 
 AugmentedShow typeclass
@@ -188,25 +188,25 @@ gone for a SYB approach.
 >   where aux t = (showString . showConstr . toConstr $ t)
 >               . (foldr (.) id . gmapQ ((showChar ' ' .) . defaultShowsPrecA inj (appPrec + 1)) $ t)
 
-Explicitly Scary Functors
+Explicitly Partial Functors
 =========================
 
 Sometimes I want to make the undefined at the head of a structure
 explicit. I don't have a safe way of doing this yet, but until then
-we have Explictly Scary Functors; make Scary structure explicit.
+we have Explictly Partial Functors; make Partial structure explicit.
 
 The basic idea is there exists some function such that;
 
 > class ExplicitF f where
->   absorb :: Exception e => Scary e (f a) -> f (Scary e a)
+>   absorb :: Exception e => Partial e (f a) -> f (Partial e a)
 
 > class ExplicitF2 f where
->   absorb2 :: Exception e => Scary e (f a b) -> f (Scary e a) (Scary e b)
+>   absorb2 :: Exception e => Partial e (f a b) -> f (Partial e a) (Partial e b)
 
 Binary trees
 ------------
 
-With binary trees, we can transform Really Scary tree structure into
+With binary trees, we can transform Really Partial tree structure into
 empty nodes.
 
 > data BT a = Empty | Leaf a | Branch (BT a) (BT a) deriving Functor
@@ -225,14 +225,14 @@ empty nodes.
 
 > instance ExplicitF BT where
 >   absorb xs | isException xs  = Empty
->   absorb (Scary Empty)        = Empty
->   absorb (Scary (Leaf a))     = Leaf (Scary a)
->   absorb (Scary (Branch l r)) = (absorb . Scary $ l) `Branch` (absorb . Scary $ r)
+>   absorb (Partial Empty)        = Empty
+>   absorb (Partial (Leaf a))     = Leaf (Partial a)
+>   absorb (Partial (Branch l r)) = (absorb . Partial $ l) `Branch` (absorb . Partial $ r)
 
 Maybe Pairs
 -----------
 
-With Maybe enclosing Tuples, we turn Really Scary maybe and tuple
+With Maybe enclosing Tuples, we turn Really Partial maybe and tuple
 structure into Nothings.
 
 > data MaybePair a b = NothingPair | JustPair (a, b)
@@ -241,5 +241,5 @@ structure into Nothings.
 
 > instance ExplicitF2 MaybePair where
 >   absorb2 xs | isException xs       = NothingPair
->   absorb2 (Scary (NothingPair))     = NothingPair
->   absorb2 (Scary (JustPair (a, b))) = JustPair (Scary a, Scary b)
+>   absorb2 (Partial (NothingPair))     = NothingPair
+>   absorb2 (Partial (JustPair (a, b))) = JustPair (Partial a, Partial b)
